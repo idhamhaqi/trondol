@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["bun-types"],
+    "paths": {
+      "@trondex/shared": ["../shared/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

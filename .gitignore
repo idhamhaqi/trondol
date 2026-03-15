@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment files (JANGAN push credential asli)
+.env
+server/.env
+server/.env.production
+client/.env
+
+# Build output
+client/dist/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Vite temp files
+*.timestamp-*
+
+# Bun
+bun.lock

@@ -1,0 +1,20 @@
+{
+  "name": "trondex",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,magenta \"bun run --filter trondex-server dev\" \"bun run --filter trondex-client dev\"",
+    "dev:server": "bun run --filter trondex-server dev",
+    "dev:client": "bun run --filter trondex-client dev",
+    "build": "bun run --filter trondex-client build",
+    "start": "bun run --filter trondex-server start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
