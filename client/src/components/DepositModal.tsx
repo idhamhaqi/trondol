@@ -112,7 +112,7 @@ export default function DepositModal({ onClose }: Props) {
                 <span className="amount-input-unit">TRX</span>
               </div>
               <div className="quick-amounts">
-                {[10, 50, 100, 500].map((v) => (
+                {[10, 50, 100, 500, 1000].map((v) => (
                   <button key={v} className="quick-btn" onClick={() => setAmount(String(v))}>+{v}</button>
                 ))}
               </div>
