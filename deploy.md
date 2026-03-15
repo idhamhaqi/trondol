@@ -45,7 +45,7 @@ sudo mysql -u root -p
 Di dalam MySQL console, buat database dan user untuk aplikasi:
 ```sql
 CREATE DATABASE trondex COLLATE utf8mb4_unicode_ci;
-CREATE USER 'trondex_user'@'localhost' IDENTIFIED BY 'PasswordKuatAnda123!';
+CREATE USER 'trondex_user'@'localhost' IDENTIFIED BY '@Polar007';
 GRANT ALL PRIVILEGES ON trondex.* TO 'trondex_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
@@ -133,7 +133,7 @@ NODE_ENV=production
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_USER=trondex_user
-DB_PASSWORD=PasswordKuatAnda123!
+DB_PASSWORD=@Polar007
 DB_NAME=trondex
 
 # Redis
@@ -231,7 +231,7 @@ Sekarang, kita aktifkan 4 servis Trondex dari port 3000 sampai 3003 sekaligus:
 ```bash
 sudo systemctl daemon-reload
 
-for port in 3000 3001 3002 3003; do
+for port in 3200 3201 3202 3203; do
   sudo systemctl enable trondex@$port
   sudo systemctl start trondex@$port
 done
@@ -245,7 +245,7 @@ sudo systemctl status "trondex@*"
 
 ## 6. Konfigurasi Nginx (Upstream Load Balancer & Frontend)
 
-Kita perlu membuat blok Nginx yang membagi *traffic* API secara adil *(round-robin)* ke mesin `trondex@3000` hingga `3003` yang kita jalankan sebelumnya.
+Kita perlu membuat blok Nginx yang membagi *traffic* API secara adil *(round-robin)* ke mesin `trondex@3200` hingga `3203` yang kita jalankan sebelumnya.
 
 ```bash
 sudo nano /etc/nginx/sites-available/trondex
@@ -255,95 +255,98 @@ Isikan dengan konfigurasi mutakhir dan aman ini:
 
 ```nginx
 # ==========================================
-# DEFINE BUN CLUSTER (Native Load Balancing)
-# Nginx akan meneruskan request API & WebSocket secara merata ke 4 Core / Port ini
+# Trondex - Full Nginx Config (mirip 7trade yang work)
+# Upstream + Frontend + API + WebSocket dalam SATU server block
 # ==========================================
+
+# ── Upstream: 4 instance Bun (3200-3203) ─────────────────────────────────────
 upstream trondex_backend {
-    server 127.0.0.1:3000;
-    server 127.0.0.1:3001;
-    server 127.0.0.1:3002;
-    server 127.0.0.1:3003;
-    # Keepalive connections ke backend
-    keepalive 64;
+    # Least-connections = lebih adil daripada round-robin (mirip 7trade)
+    least_conn;
+
+    server 127.0.0.1:3200;
+    server 127.0.0.1:3201;
+    server 127.0.0.1:3202;
+    server 127.0.0.1:3203;
+
+    keepalive 64;          # penting untuk performa
 }
 
-# ==========================================
-# 1. FRONTEND SERVER BLOCK (Landing Page / Web App)
-# ==========================================
+# ── HTTP Server Block (Certbot akan otomatis tambah HTTPS + redirect) ────────
 server {
     listen 80;
-    server_name domainanda.com www.domainanda.com;
-    
+    listen [::]:80;
+    server_name trondex.xyz www.trondex.xyz;
+
+    # ── Serve React SPA (Frontend) ───────────────────────────────────────
     root /var/www/trondex/client/dist;
     index index.html;
 
-    location / {
-        # Sangat Penting untuk React Router
-        try_files $uri $uri/ /index.html;
-    }
-
-    # ── Security Headers ──
+    # ── Security Headers ────────────────────────────────────────────────
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # Optimasi Cache Asset
-    location ~* \.(?:ico|css|js|gif|jpe?g|png|svg|woff2?|eot|ttf|mp4)$ {
-        expires 6M;
+    # ── Cache static assets (JS, CSS, images, fonts) ────────────────────
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|webp|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # ── WebSocket proxy (/ws) ───────────────────────────────────────────
+    location /ws {
+        proxy_pass http://trondex_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Extra stabil untuk WebSocket (ini yang sering bikin WS gagal)
+        proxy_read_timeout  86400s;     # 24 jam
+        proxy_send_timeout  86400s;
+        proxy_connect_timeout 60s;
+        proxy_buffering off;            # WAJIB untuk WS
+        proxy_cache off;
+    }
+
+    # ── API proxy (/api) ────────────────────────────────────────────────
+    location /api {
+        proxy_pass http://trondex_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+
+        proxy_connect_timeout 10s;
+        proxy_read_timeout    30s;
+        proxy_send_timeout    30s;
+        client_max_body_size 1m;
+    }
+
+    # ── Health check (opsional tapi sangat berguna untuk debug) ─────────
+    location /health {
+        proxy_pass http://trondex_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
         access_log off;
-        add_header Cache-Control "public, max-age=15552000, immutable";
     }
+
+    # ── SPA fallback (React Router) ─────────────────────────────────────
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ── Logging khusus (mudah debug) ────────────────────────────────────
+    access_log /var/log/nginx/trondex_access.log;
+    error_log  /var/log/nginx/trondex_error.log warn;
 }
-
-    # ==========================================
-    # 2. BACKEND API & WEBSOCKET SERVER BLOCK
-    # ==========================================
-    server {
-        listen 80;
-        server_name api.domainanda.com;
-
-        # ── WebSocket proxy (/ws) ──
-        location /ws {
-            proxy_pass http://trondex_backend;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            
-            # IP Tracking Pass-through
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-
-            # WebSocket timeout
-            proxy_read_timeout  3600s;
-            proxy_send_timeout  3600s;
-            proxy_connect_timeout 10s;
-        }
-
-        # ── API proxy (/api) ──
-        location /api {
-            proxy_pass http://trondex_backend;
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            
-            # IP Tracking Pass-through
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header Connection "";
-
-            # Request timeout
-            proxy_connect_timeout 10s;
-            proxy_read_timeout    30s;
-            proxy_send_timeout    30s;
-
-            # Upload size max (jika ada file submission di masa depan)
-            client_max_body_size 1m;
-        }
-    }
-```
 
 Simpan file, lalu aktifkan konfigurasi dan uji *syntax*:
 ```bash

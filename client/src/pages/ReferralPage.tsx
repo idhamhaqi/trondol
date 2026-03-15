@@ -122,7 +122,7 @@ export default function ReferralPage() {
     <div className="portfolio-page">
       <div className="page-header">
         <div className="page-title">Referral Program</div>
-        <div className="page-subtitle">Earn 1% bonus from your referrals' trade volume + 10 insurance days per active referral</div>
+        <div className="page-subtitle">Earn 0.3% bonus from your referrals' trade volume + 10 insurance days per active referral</div>
       </div>
 
       <div className="portfolio-layout">

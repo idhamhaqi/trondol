@@ -42,18 +42,19 @@ export default function LandingPage() {
           minWidth: '100vw', 
           height: '100%', 
           display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
+          flexDirection: 'column',
           textAlign: 'center', 
           padding: '20px', 
           position: 'relative',
-          scrollSnapAlign: 'start'
+          scrollSnapAlign: 'start',
+          scrollSnapStop: 'always',
+          overflowY: 'auto'
         }}
       >
         {/* Background glow effects */}
         <div style={{ position: 'absolute', top: '10%', left: '50%', transform: 'translateX(-50%)', width: '80vmin', height: '80vmin', background: 'radial-gradient(circle, rgba(124,58,237,0.15) 0%, rgba(0,0,0,0) 70%)', pointerEvents: 'none', zIndex: 0 }} />
         
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 800, margin: '0 auto' }}>
+        <div style={{ margin: 'auto', position: 'relative', zIndex: 1, maxWidth: 800, width: '100%', padding: '40px 0' }}>
           <div style={{ 
             display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 16px', 
             borderRadius: 'var(--radius-full)', background: 'rgba(0, 212, 255, 0.1)', 
@@ -102,16 +103,17 @@ export default function LandingPage() {
           minWidth: '100vw', 
           height: '100%', 
           display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
+          flexDirection: 'column',
           padding: '20px', 
           background: 'rgba(0,0,0,0.3)',
           borderLeft: '1px solid var(--border)', 
           borderRight: '1px solid var(--border)',
-          scrollSnapAlign: 'start'
+          scrollSnapAlign: 'start',
+          scrollSnapStop: 'always',
+          overflowY: 'auto'
         }}
       >
-        <div style={{ maxWidth: 1000, margin: '0 auto', width: '100%' }}>
+        <div style={{ margin: 'auto', maxWidth: 1000, width: '100%', padding: '40px 0' }}>
           <div style={{ textAlign: 'center', marginBottom: '8vh' }}>
             <h2 style={{ fontSize: 'clamp(1.8rem, 3.5vw, 2.8rem)', fontFamily: 'var(--font-display)', marginBottom: 16 }}>
               Human Intuition meets <span style={{ color: 'var(--purple)' }}>Machine Learning</span>
@@ -169,13 +171,14 @@ export default function LandingPage() {
           minWidth: '100vw', 
           height: '100%', 
           display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
+          flexDirection: 'column',
           padding: '20px',
-          scrollSnapAlign: 'start'
+          scrollSnapAlign: 'start',
+          scrollSnapStop: 'always',
+          overflowY: 'auto'
         }}
       >
-        <div className="glass-card pulse-glow-border" style={{ maxWidth: 800, margin: '0 auto', padding: 'clamp(30px, 5vw, 60px)', textAlign: 'center', background: 'linear-gradient(180deg, rgba(7,11,20,0) 0%, rgba(124,58,237,0.08) 100%)', border: '1px solid rgba(124,58,237,0.3)' }}>
+        <div className="glass-card pulse-glow-border" style={{ margin: 'auto', maxWidth: 800, width: '100%', padding: 'clamp(30px, 5vw, 60px)', textAlign: 'center', background: 'linear-gradient(180deg, rgba(7,11,20,0) 0%, rgba(124,58,237,0.08) 100%)', border: '1px solid rgba(124,58,237,0.3)' }}>
           <div style={{ width: 80, height: 80, borderRadius: 'var(--radius-full)', background: 'rgba(124,58,237,0.15)', color: 'var(--purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 30px auto', boxShadow: '0 0 30px rgba(124,58,237,0.3)' }}>
             <Icons.gift size={40} />
           </div>
