@@ -137,6 +137,20 @@ app.get('/api/chart/ticker', async (c) => {
   }
 });
 
+// ─── Public Settings (scripts etc) ────────────
+app.get('/api/public/settings', async (c) => {
+  try {
+    const rows = await db`SELECT setting_key, setting_value FROM site_settings`;
+    const settings: Record<string, string> = {};
+    for (const row of rows) {
+      settings[row.setting_key] = row.setting_value;
+    }
+    return c.json(settings);
+  } catch (err: any) {
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
 
 // ─── Startup ─────────────────────────────────
 async function startup(): Promise<void> {

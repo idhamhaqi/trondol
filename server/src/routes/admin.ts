@@ -249,5 +249,41 @@ export function createAdminRoutes(db: DB): Hono {
     }
   });
 
+  // GET /api/admin/settings
+  app.get('/settings', async (c) => {
+    try {
+      const rows = await db`SELECT setting_key, setting_value FROM site_settings`;
+      const settings: Record<string, string> = {};
+      for (const row of rows) {
+        settings[row.setting_key] = row.setting_value;
+      }
+      return c.json(settings);
+    } catch (err: any) {
+      return c.json({ error: 'Internal server error' }, 500);
+    }
+  });
+
+  // PUT /api/admin/settings
+  app.put('/settings', async (c) => {
+    try {
+      const body = await c.req.json<Record<string, string>>();
+      
+      await db.transaction(async (tx: any) => {
+        for (const [key, value] of Object.entries(body)) {
+          // Upsert using REPLACE INTO or duplicate key update
+          await tx.unsafe(`
+            INSERT INTO site_settings (setting_key, setting_value)
+            VALUES (${mysql.escape(key)}, ${mysql.escape(value)})
+            ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+          `);
+        }
+      });
+      
+      return c.json({ success: true });
+    } catch (err: any) {
+      return c.json({ error: err.message || 'Internal server error' }, 500);
+    }
+  });
+
   return app;
 }

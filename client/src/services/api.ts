@@ -111,6 +111,10 @@ export const api = {
 
   cancelTrade: (tradeId: number) =>
     request<any>(`/trades/${tradeId}/cancel`, { method: 'POST' }),
+
+  // Settings
+  getPublicSettings: () =>
+    request<Record<string, string>>('/public/settings'),
 };
 
 // Admin API (uses sessionStorage)
@@ -172,5 +176,15 @@ export const adminApi = {
     adminRequest<any>(`/admin/users/${userId}/adjust-balance`, {
       method: 'POST',
       body: JSON.stringify({ amount }),
+    }),
+
+  // Settings
+  getSettings: () =>
+    adminRequest<Record<string, string>>('/admin/settings'),
+
+  saveSettings: (settings: Record<string, string>) =>
+    adminRequest<any>('/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
     }),
 };

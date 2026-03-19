@@ -7,7 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import { adminApi } from '../services/api.ts';
 import { useToast } from '../context/ToastContext.tsx';
 
-type AdminTab = 'dashboard' | 'withdrawals' | 'deposits' | 'users';
+type AdminTab = 'dashboard' | 'withdrawals' | 'deposits' | 'users' | 'settings';
 
 export default function AdminPage() {
   const [searchParams] = useSearchParams();
@@ -38,6 +38,10 @@ export default function AdminPage() {
   const [editAmount, setEditAmount] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editMsg, setEditMsg] = useState('');
+
+  // Settings
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [savingSettings, setSavingSettings] = useState(false);
 
   // Auto-login with URL key on mount
   useEffect(() => {
@@ -86,6 +90,9 @@ export default function AdminPage() {
         const d = await adminApi.getUsers(userPage, userSearch);
         setUsers(d.data || []);
         setUserTotal(d.total || 0);
+      } else if (tab === 'settings') {
+        const d = await adminApi.getSettings();
+        setSettings(d || {});
       }
     } catch { /* ignore */ }
     setDataLoading(false);
@@ -211,6 +218,17 @@ export default function AdminPage() {
     }
   };
 
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      await adminApi.saveSettings(settings);
+      showToast('Settings saved successfully', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save settings', 'error');
+    }
+    setSavingSettings(false);
+  };
+
   // Show loading spinner while verifying URL key
   if (loading404) {
     return (
@@ -245,6 +263,7 @@ export default function AdminPage() {
           { id: 'withdrawals', icon: '💸', label: 'Withdrawals' },
           { id: 'deposits', icon: '💳', label: 'Deposits' },
           { id: 'users', icon: '👥', label: 'Users' },
+          { id: 'settings', icon: '⚙️', label: 'Settings' },
         ] as { id: AdminTab; icon: string; label: string }[]).map((item) => (
           <button
             key={item.id}
@@ -623,6 +642,46 @@ export default function AdminPage() {
                 <button className="page-btn" disabled={userPage >= Math.ceil(userTotal / 20)} onClick={() => setUserPage(p => p + 1)}>→</button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* SETTINGS */}
+        {tab === 'settings' && (
+          <div style={{ maxWidth: 800 }}>
+            <div className="page-title" style={{ marginBottom: 16 }}>⚙️ Settings</div>
+            
+            <div style={{ background: 'var(--bg-glass)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20 }}>
+              <h3 style={{ margin: '0 0 16px', fontSize: '1rem', color: 'var(--text-primary)' }}>Custom Scripts & Tracking</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 16 }}>
+                Inject custom HTML or Javascript (like Google Analytics, Facebook Pixel, or live chat widgets). 
+                These scripts are appended dynamically when players load the website.
+              </p>
+              
+              <div className="form-group">
+                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Custom Head Scripts</span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Injected into &lt;head&gt;</span>
+                </label>
+                <textarea
+                  className="form-input"
+                  style={{ minHeight: 160, fontFamily: 'monospace', fontSize: '0.8rem', lineHeight: 1.5, resize: 'vertical' }}
+                  placeholder="<!-- Google tag (gtag.js) -->&#10;<script async src=&#34;https://www.googletagmanager.com/gtag/js?id=G-XXXXXX&#34;></script>&#10;<script>&#10;  window.dataLayer = window.dataLayer || [];&#10;  function gtag(){dataLayer.push(arguments);}&#10;  gtag('js', new Date());&#10;  gtag('config', 'G-XXXXXX');&#10;</script>"
+                  value={settings['custom_head_script'] || ''}
+                  onChange={(e) => setSettings({ ...settings, custom_head_script: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
+                <button 
+                  className="btn btn-primary" 
+                  style={{ padding: '8px 24px' }}
+                  onClick={handleSaveSettings}
+                  disabled={savingSettings}
+                >
+                  {savingSettings ? 'Saving...' : 'Save Settings'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
