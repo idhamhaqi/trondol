@@ -62,7 +62,7 @@ function getYesterdayWIB(): string {
   return d.toISOString().slice(0, 10);
 }
 
-// ---- Scheduler ----
+// ---- Scheduler & Live Price Caching ----
 
 async function checkAndSettle(): Promise<void> {
   if (!isRunning) return;
@@ -70,79 +70,152 @@ async function checkAndSettle(): Promise<void> {
   const hourWIB = wib.getUTCHours();
   const minuteWIB = wib.getUTCMinutes();
 
-  // Bug fix: expanded window from 2min to 59min.
-  // Delaying settlement to 07:05 WIB to ensure Binance candle is fully published.
-  if (hourWIB === TRADE_WINDOW_START && minuteWIB >= 5) {
+  // 1. Snapshot Live Price exactly between 07:00 and 07:02 WIB
+  if (hourWIB === TRADE_WINDOW_START && minuteWIB >= 0 && minuteWIB <= 2) {
     const yesterday = getYesterdayWIB();
-    if (lastSettledDate === yesterday) return; // already settled this session
-    await settleDay(yesterday);
+    if (lastSettledDate !== yesterday) {
+      await cacheLivePrice(yesterday);
+    }
+  }
+
+  // 2. Continually retry and execute settlements for ALL pending dates directly
+  await retryPendingSettlement();
+}
+
+async function getLivePriceFallback(): Promise<number> {
+  const sources = [
+    'https://api.binance.vision/api/v3/ticker/price?symbol=TRXUSDT',
+    'https://api.bybit.com/v5/market/tickers?category=spot&symbol=TRXUSDT',
+    'https://api.gateio.ws/api/v4/spot/tickers?currency_pair=TRX_USDT'
+  ];
+  for (const url of sources) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (url.includes('binance')) return parseFloat(data.price);
+      if (url.includes('bybit')) return parseFloat(data.result.list[0].lastPrice);
+      if (url.includes('gate')) return parseFloat(data[0].last);
+    } catch { continue; }
+  }
+  return 0;
+}
+
+async function cacheLivePrice(tradeDate: string): Promise<void> {
+  const lockKey = `trondex:cache_price_lock:${tradeDate}`;
+  const locked = await redis.set(lockKey, '1', 'EX', 1800, 'NX');
+  if (locked !== 'OK') return;
+
+  console.log(`[TradeManager] Capturing live stream price for ${tradeDate} exactly at 07:00 WIB...`);
+  try {
+    const { getLatestPrice } = await import('./priceManager.js');
+    let liveVal = getLatestPrice()?.price || 0;
+    if (liveVal <= 0) {
+       liveVal = await getLivePriceFallback();
+    }
+    
+    if (liveVal <= 0) {
+      console.error(`[TradeManager] Failed to fetch live price at 07:00 WIB for ${tradeDate}`);
+      await redis.del(lockKey); // release to retry
+      return;
+    }
+
+    const candles = await getDailyCandles(5); 
+    if (candles.length < 2) {
+      console.error(`[TradeManager] Not enough historical candles to determine prevClose`);
+      await redis.del(lockKey);
+      return;
+    }
+    
+    const targetTime = new Date(tradeDate + 'T00:00:00Z').getTime();
+    const prevCandle = candles.find(c => c.openTime === targetTime);
+    if (!prevCandle) {
+       console.error(`[TradeManager] Prev candle not found for date ${tradeDate} in recent candles`);
+       await redis.del(lockKey);
+       return;
+    }
+
+    const prevClose = prevCandle.close;
+    const direction = liveVal >= prevClose ? 'up' : 'down';
+
+    await db.unsafe(`
+      INSERT IGNORE INTO daily_results (trade_date, open_price, prev_close, direction)
+      VALUES ('${tradeDate}', ${liveVal}, ${prevClose}, '${direction}')
+    `);
+    
+    lastSettledDate = tradeDate;
+    console.log(`[TradeManager] Cached 07:00 WIB live price for ${tradeDate} -> ${liveVal} (${direction})`);
+  } catch (err: any) {
+    console.error(`[TradeManager] cacheLivePrice error:`, err.message);
+    await redis.del(lockKey);
   }
 }
 
-async function settleDay(tradeDate: string): Promise<void> {
+async function settleHistoricalDay(tradeDate: string): Promise<void> {
   const lockKey = `trondex:settle_lock:${tradeDate}`;
-  // Extended lock TTL to 30min to cover large settlement batches
   const locked = await redis.set(lockKey, '1', 'EX', 1800, 'NX');
-  if (locked !== 'OK') {
-    console.log(`[TradeManager] Settlement for ${tradeDate} already running or locked`);
-    return;
-  }
+  if (locked !== 'OK') return;
 
-  console.log(`[TradeManager] Settling trades for ${tradeDate}...`);
   try {
-    // Get last 3 daily candles to handle partial-candle edge case
-    const candles = await getDailyCandles(3);
-    if (candles.length < 2) {
-      console.error('[TradeManager] Not enough candles from Binance — aborting settlement');
-      return;
+    let [resultRow] = await db`SELECT open_price, direction, prev_close FROM daily_results WHERE trade_date = ${tradeDate}`;
+    
+    let openNextDay = 0;
+    let direction: 'up' | 'down' = 'up';
+    let prevClose = 0;
+
+    if (resultRow) {
+       openNextDay = parseFloat(resultRow.open_price as string);
+       direction = resultRow.direction as 'up' | 'down';
+       prevClose = parseFloat(resultRow.prev_close as string);
+    } else {
+       // fallback to historical candles if we completely missed caching it at 07:00 WIB
+       const limit = 30;
+       const candles = await getDailyCandles(limit);
+       
+       const targetTime = new Date(tradeDate + 'T00:00:00Z').getTime();
+       const nextDayTime = targetTime + 86400_000;
+       
+       const prevCandle = candles.find(c => c.openTime === targetTime);
+       const nextCandle = candles.find(c => c.openTime === nextDayTime);
+       
+       if (!prevCandle || !nextCandle) {
+         console.warn(`[TradeManager] Historical candles missing for ${tradeDate}. Cannot settle yet.`);
+         await redis.del(lockKey);
+         return;
+       }
+       openNextDay = nextCandle.open;
+       prevClose = prevCandle.close;
+       direction = openNextDay >= prevClose ? 'up' : 'down';
+       
+       await db.unsafe(`
+         INSERT IGNORE INTO daily_results (trade_date, open_price, prev_close, direction)
+         VALUES ('${tradeDate}', ${openNextDay}, ${prevClose}, '${direction}')
+       `);
+       console.log(`[TradeManager] Saved BACKUP historical price for ${tradeDate} -> ${openNextDay} (${direction})`);
     }
-
-    const prevCandle = candles[candles.length - 2];
-    const todayCandle = candles[candles.length - 1];
-
-    // todayCandle.open is the 00:00 UTC opening price — valid from the very first second.
-    // Even if todayCandle is still "forming" (closeTime in the future), the open price
-    // is already locked in and is the correct settlement reference.
-    // Only log a warning if open is 0 (rare API glitch).
-    if (!todayCandle.open || todayCandle.open <= 0) {
-      console.error('[TradeManager] todayCandle.open is 0 or missing — aborting settlement');
-      return;
-    }
-
-    const openNextDay = todayCandle.open;
-    const prevClose = prevCandle.close;
-    const direction: 'up' | 'down' = openNextDay >= prevClose ? 'up' : 'down';
-
-    console.log(`[TradeManager] Candle data — prev close: ${prevClose}, today open: ${openNextDay}, direction: ${direction}`);
-
-    // Record daily result
-    await db.unsafe(`
-      INSERT IGNORE INTO daily_results (trade_date, open_price, prev_close, direction)
-      VALUES ('${tradeDate}', ${openNextDay}, ${prevClose}, '${direction}')
-    `);
 
     const pendingTrades = await db`
-      SELECT t.id, t.user_id, t.side, t.amount, t.entry_price,
-             u.insurance_days_remaining
+      SELECT t.id, t.user_id, t.side, t.amount, t.entry_price, u.insurance_days_remaining
       FROM trades t
       JOIN users u ON u.id = t.user_id
       WHERE t.trade_date = ${tradeDate} AND t.result = 'pending'
     `;
 
-    for (const trade of pendingTrades) {
-      await settleTrade(trade, direction, openNextDay);
+    if (pendingTrades.length > 0) {
+      console.log(`[TradeManager] Settling ${pendingTrades.length} trades for ${tradeDate}`);
+      for (const trade of pendingTrades) {
+        await settleTrade(trade, direction, openNextDay);
+      }
+
+      pubSub.publish(pubSub.broadcastChannel(), {
+        type: 'daily_result',
+        data: { trade_date: tradeDate, open_price: openNextDay, prev_close: prevClose, direction },
+      });
     }
 
-    // Broadcast result
-    pubSub.publish(pubSub.broadcastChannel(), {
-      type: 'daily_result',
-      data: { trade_date: tradeDate, open_price: openNextDay, prev_close: prevClose, direction },
-    });
-
-    lastSettledDate = tradeDate;
-    console.log(`[TradeManager] Settlement done for ${tradeDate} — direction: ${direction}`);
   } catch (err: any) {
-    console.error('[TradeManager] Settlement error:', err.message);
+    console.error(`[TradeManager] Historical settle error for ${tradeDate}:`, err.message);
+    await redis.del(lockKey);
   }
 }
 
@@ -292,40 +365,29 @@ export async function placeTrade(
 
 // ---- On startup: re-settle missed settlements ----
 export async function retryPendingSettlement(): Promise<void> {
-  const yesterday = getYesterdayWIB();
   const wib = getWibDate();
+  const today = getTodayWIB();
+  const yesterday = getYesterdayWIB();
   const hourWIB = wib.getUTCHours();
-
-  const [{ cnt }] = await db`
-    SELECT COUNT(*) AS cnt FROM trades WHERE trade_date = ${yesterday} AND result = 'pending'
+  
+  const pendingDates = await db`
+    SELECT DISTINCT DATE_FORMAT(trade_date, '%Y-%m-%d') AS t_date 
+    FROM trades 
+    WHERE result = 'pending'
   `;
-  const pendingCount = parseInt(cnt as string);
 
-  // Always clean up stale lock on startup so server restart can retry
-  // A lock from a previous crashed run would otherwise block for 30min
-  const lockKey = `trondex:settle_lock:${yesterday}`;
-  const lockExists = await redis.exists(lockKey);
-  if (lockExists) {
-    if (pendingCount === 0) {
-      // All trades already settled — lock is orphaned, clean it up
-      await redis.del(lockKey);
-      console.log(`[TradeManager] Cleaned up orphaned lock for ${yesterday} (no pending trades)`);
-      return;
+  for (const row of pendingDates) {
+    const tDate = row.t_date as string;
+    if (tDate === today) continue; // Can't settle today yet
+    if (tDate === yesterday && hourWIB < TRADE_WINDOW_START) continue; // Wait until 07:00
+
+    // Cleanup orphaned locks if they exist (helps recovery after crash)
+    const lockKey = `trondex:settle_lock:${tDate}`;
+    const lockExists = await redis.exists(lockKey);
+    if (lockExists) {
+       await redis.del(lockKey);
     }
-    // Pending trades exist but lock is held — delete it so we can retry
-    // (previous server run likely crashed mid-settlement)
-    await redis.del(lockKey);
-    console.log(`[TradeManager] Cleared stale lock for ${yesterday}, will retry settlement`);
+
+    await settleHistoricalDay(tDate);
   }
-
-  if (pendingCount === 0) return;
-
-  const minuteWIB = wib.getUTCMinutes();
-  if (hourWIB < TRADE_WINDOW_START || (hourWIB === TRADE_WINDOW_START && minuteWIB < 5)) {
-    console.log(`[TradeManager] ${cnt} pending trades for ${yesterday}, but before 07:05 WIB — will settle at 07:05`);
-    return;
-  }
-
-  console.log(`[TradeManager] Re-settling ${pendingCount} missed trades for ${yesterday}`);
-  await settleDay(yesterday);
 }
