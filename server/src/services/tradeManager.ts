@@ -262,8 +262,8 @@ async function settleTrade(trade: any, globalDirection: 'up' | 'down', openNextD
           insuranceUsed = 1;
           newBalance = Math.round((balance + amount) * 1_000_000) / 1_000_000;
           await tx`UPDATE users SET balance = ${newBalance}, insurance_days_remaining = insurance_days_remaining - 1 WHERE id = ${trade.user_id}`;
-          // To tell frontend it's a refunded loss, we can use a custom result string
-          resultStr = 'refunded';
+          // To tell frontend it's a refunded loss, we use insurance_used flag instead of an invalid enum
+          resultStr = 'loss';
         } else {
           // Pure Loss: Lose 3% margin.
           // Return collateral MINUS margin (e.g. 1000 - 30 = 970)
