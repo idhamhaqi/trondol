@@ -271,11 +271,11 @@ export function createAdminRoutes(db: DB): Hono {
       await db.transaction(async (tx: any) => {
         for (const [key, value] of Object.entries(body)) {
           // Upsert using REPLACE INTO or duplicate key update
-          await tx.unsafe(`
+          await tx`
             INSERT INTO site_settings (setting_key, setting_value)
-            VALUES (${mysql.escape(key)}, ${mysql.escape(value)})
+            VALUES (${key}, ${value})
             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
-          `);
+          `;
         }
       });
       
